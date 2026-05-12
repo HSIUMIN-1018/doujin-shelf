@@ -74,12 +74,8 @@ function compressImage(file) {
       canvas.width = img.width * scale;
       canvas.height = img.height * scale;
       canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob((blob) => {
-        const reader = new FileReader();
-        reader.onload = () => res({ dataUrl: reader.result, mimeType: "image/jpeg" });
-        reader.readAsDataURL(blob);
-      }, "image/jpeg", 0.9);
       URL.revokeObjectURL(url);
+      res({ dataUrl: canvas.toDataURL("image/jpeg", 0.9), mimeType: "image/jpeg" });
     };
     img.src = url;
   });
@@ -371,22 +367,20 @@ function EditView({ book, isNew, onSave, onCancel }) {
 
   const runOCR = async (images) => {
     setOcrLoading(true);
-    setOcrText("辨識中，請稍候...");
     try {
-      const worker = await Tesseract.createWorker("jpn+chi_tra+eng", 1, {
-        workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js",
-        langPath: "https://tessdata.projectnaptha.com/4.0.0_fast",
-        corePath: "https://cdn.jsdelivr.net/npm/tesseract.js-core@5",
-      });
       const texts = [];
       for (const img of images) {
-        const { data } = await worker.recognize(img);
+        const { data } = await Tesseract.recognize(img, "jpn+chi_tra+eng", {
+          workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js",
+          langPath: "https://tessdata.projectnaptha.com/4.0.0",
+          corePath: "https://cdn.jsdelivr.net/npm/tesseract.js-core@5",
+        });
         texts.push(data.text);
       }
-      await worker.terminate();
       setOcrText(texts.join("\n---\n").trim() || "（未辨識到文字）");
     } catch (e) {
-      setOcrText("辨識失敗：" + (e.message || "請重試"));
+      console.error("OCR error:", e);
+      setOcrText("辨識失敗：" + (e?.message || "請開 F12 查看詳細錯誤"));
     }
     setOcrLoading(false);
   };
@@ -403,10 +397,14 @@ function EditView({ book, isNew, onSave, onCancel }) {
   const handleAiUpload = async (e) => {
     const files = Array.from(e.target.files);
     if (!files.length) return;
-    const compressed = await Promise.all(files.map(compressImage));
-    set("coverImage", compressed[0].dataUrl);
-    set("_ocrImages", compressed.map((c) => c.dataUrl));
-    runOCR(compressed.map((c) => c.dataUrl));
+    try {
+      const compressed = await Promise.all(files.map(compressImage));
+      set("coverImage", compressed[0].dataUrl);
+      set("_ocrImages", compressed.map((c) => c.dataUrl));
+      runOCR(compressed.map((c) => c.dataUrl));
+    } catch (err) {
+      setOcrText("圖片載入失敗：" + (err?.message || "請重試"));
+    }
     e.target.value = "";
   };
 
